@@ -525,8 +525,11 @@
         const j = await r.json();
         if (j.films && j.films.length){
           const added = addFilms(j.films);
+          const scope = j.source === "recent" ? "recent films" : "full library";
           setStatus(added
-            ? 'added <b>' + added + '</b> films from <b>' + user + '</b> (full library). drag them into tiers, or click to multi-select and batch-assign.'
+            ? 'added <b>' + added + '</b> films from <b>' + user + '</b> (' + scope + '). '
+              + (j.note ? j.note + ' ' : '')
+              + 'drag them into tiers, or click to multi-select and batch-assign.'
             : "those films are already loaded - nothing new to add.");
           return;
         }
