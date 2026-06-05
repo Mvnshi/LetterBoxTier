@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>movie tier list</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0d0f;
+    --panel:#161618;
+    --row:#1b1b1e;
+    --row-2:#202024;
+    --line:#2a2a2f;
+    --line-soft:#222226;
+    --text:#e9e9ec;
+    --text-dim:#8b8b93;
+    --text-faint:#5f5f68;
+    --accent:#19e58a;
+    --danger:#ff5b6b;
+    --label-h:88px;
+    --S:#ff7f7f; --A:#ffbf7f; --B:#ffff7f; --C:#7fff7f; --D:#7fbfff; --E:#8f8fff; --F:#ff7fff;
+    --poster-w:62px; --poster-h:93px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+    padding:22px 22px 240px;
+  }
+
+  /* ---- top bar ---- */
+  .bar{
+    max-width:1180px;margin:0 auto 18px;
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+    padding:14px 16px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+  }
+  .brand{
+    display:flex;align-items:baseline;gap:9px;margin-right:6px;user-select:none;
+  }
+  .brand b{font-size:16px;letter-spacing:.2px;font-weight:700;}
+  .brand span{font-size:11px;color:var(--text-faint);letter-spacing:.6px;text-transform:uppercase;}
+  .field{
+    display:flex;align-items:center;gap:0;flex:1 1 320px;min-width:240px;
+    background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  }
+  .field svg{flex:none;margin:0 8px 0 11px;color:var(--text-faint);}
+  .field input{
+    flex:1;background:transparent;border:0;outline:0;color:var(--text);
+    font-size:13.5px;padding:11px 12px 11px 0;font-family:inherit;
+  }
+  .field input::placeholder{color:var(--text-faint);}
+  button{
+    font-family:inherit;font-size:13px;font-weight:600;color:var(--text);
+    background:var(--row-2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;cursor:pointer;white-space:nowrap;transition:.13s;
+  }
+  button:hover{background:#27272c;border-color:#37373d;}
+  button:active{transform:translateY(1px);}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#04130c;}
+  button.primary:hover{background:#2af29a;}
+  button.ghost{background:transparent;}
+  button:disabled{opacity:.45;cursor:not-allowed;transform:none;}
+  .status{
+    max-width:1180px;margin:0 auto 16px;min-height:18px;
+    font-size:12.5px;color:var(--text-dim);padding:0 4px;
+  }
+  .status b{color:var(--text);}
+  .status.err{color:var(--danger);}
+  .status .spin{display:inline-block;width:11px;height:11px;border:2px solid #444;border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px;margin-right:6px;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+
+  /* ---- tier list ---- */
+  .tierlist{
+    max-width:1180px;margin:0 auto;
+    background:var(--bg);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  }
+  .tier{
+    display:flex;align-items:stretch;
+    border-bottom:1px solid var(--line);min-height:calc(var(--label-h) + 12px);
+    position:relative;
+  }
+  .tier:last-child{border-bottom:0;}
+  .label{
+    width:var(--label-h);flex:none;display:flex;align-items:center;justify-content:center;
+    color:#15110d;font-weight:700;font-size:24px;text-align:center;line-height:1.05;
+    padding:6px;word-break:break-word;position:relative;cursor:text;outline:0;
+    border-right:1px solid rgba(0,0,0,.25);
+  }
+  .label::after{
+    content:attr(data-count);position:absolute;top:5px;right:7px;
+    font-size:10px;font-weight:700;color:rgba(0,0,0,.42);pointer-events:none;
+  }
+  .label:focus{box-shadow:inset 0 0 0 2px rgba(0,0,0,.4);}
+  .label:focus::after{display:none;}
+  .drop{
+    flex:1;display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px;
+    padding:6px;background:var(--row);min-height:calc(var(--label-h) + 12px);
+    transition:background .1s;
+  }
+  .tier:nth-child(even) .drop{background:var(--row-2);}
+  .drop.over{background:#2c3a33;box-shadow:inset 0 0 0 2px var(--accent);}
+  .rowtools{
+    width:34px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:var(--panel);border-left:1px solid var(--line);
+    opacity:0;transition:.12s;
+  }
+  .tier:hover .rowtools{opacity:1;}
+  .rowtools button{
+    width:24px;height:20px;padding:0;font-size:11px;line-height:1;border-radius:6px;
+    background:transparent;border:0;color:var(--text-faint);
+  }
+  .rowtools button:hover{color:var(--text);background:#2a2a30;}
+  .rowtools input[type=color]{
+    width:18px;height:18px;border:0;background:transparent;padding:0;cursor:pointer;border-radius:50%;overflow:hidden;
+  }
+  .rowtools input[type=color]::-webkit-color-swatch-wrapper{padding:0;}
+  .rowtools input[type=color]::-webkit-color-swatch{border:0;border-radius:50%;}
+
+  .addrow{
+    max-width:1180px;margin:10px auto 0;display:flex;justify-content:center;
+  }
+  .addrow button{background:transparent;border:1px dashed var(--line);color:var(--text-dim);}
+  .addrow button:hover{color:var(--text);border-color:var(--text-faint);}
+
+  /* ---- poster chip ---- */
+  .chip{
+    width:var(--poster-w);height:var(--poster-h);flex:none;border-radius:3px;overflow:hidden;
+    position:relative;cursor:grab;background:#000;
+    box-shadow:0 1px 3px rgba(0,0,0,.5);user-select:none;
+  }
+  .chip img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+  .chip .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;
+    font-size:8.5px;color:var(--text-dim);padding:3px;line-height:1.15;background:#1f1f24;}
+  .chip.dragging{opacity:.4;}
+  .chip.sel{box-shadow:0 0 0 2px var(--accent),0 0 0 4px rgba(25,229,138,.25);}
+  .chip.sel::after{
+    content:"";position:absolute;top:3px;right:3px;width:13px;height:13px;border-radius:50%;
+    background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2304130c' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center/9px no-repeat;
+  }
+  .chip .yr{
+    position:absolute;bottom:0;left:0;right:0;font-size:8px;color:#cfcfd4;
+    background:linear-gradient(transparent,rgba(0,0,0,.85));padding:8px 3px 2px;text-align:center;
+    opacity:0;transition:.12s;pointer-events:none;
+  }
+  .chip:hover .yr{opacity:1;}
+
+  /* ---- pool tray ---- */
+  .tray{
+    position:fixed;left:0;right:0;bottom:0;z-index:40;
+    background:var(--panel);border-top:1px solid var(--line);
+    box-shadow:0 -8px 24px rgba(0,0,0,.5);
+  }
+  .tray-head{
+    display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--line-soft);
+  }
+  .tray-head .t{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-dim);}
+  .tray-head .t b{color:var(--text);}
+  .tray-head .grow{flex:1;}
+  .tray-head button{padding:7px 11px;font-size:12px;}
+  .pool{
+    display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start;
+    padding:10px 18px;max-height:168px;overflow-y:auto;min-height:60px;
+  }
+  .pool.over{box-shadow:inset 0 0 0 2px var(--accent);background:#1d2b25;}
+  .empty{
+    width:100%;text-align:center;color:var(--text-faint);font-size:13px;padding:24px 10px;line-height:1.5;
+  }
+  .empty b{color:var(--text-dim);font-weight:600;}
+
+  /* ---- selection toolbar ---- */
+  .selbar{
+    position:fixed;left:50%;bottom:200px;transform:translateX(-50%) translateY(20px);
+    z-index:60;display:flex;align-items:center;gap:6px;
+    background:#0a0a0c;border:1px solid var(--line);border-radius:12px;
+    padding:8px 10px;box-shadow:0 10px 30px rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;transition:.16s;
+  }
+  .selbar.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0);}
+  .selbar .n{font-size:12px;color:var(--text-dim);padding:0 4px 0 2px;}
+  .selbar .n b{color:var(--text);}
+  .selbar .move{font-size:11px;color:var(--text-faint);}
+  .selbar .tbtn{
+    width:28px;height:28px;padding:0;font-size:13px;font-weight:700;color:#15110d;border:0;border-radius:7px;
+  }
+  .selbar .tbtn:hover{transform:translateY(-2px);}
+  .selbar .x{background:transparent;border:1px solid var(--line);color:var(--text-dim);width:28px;height:28px;padding:0;}
+  .selbar .x:hover{color:var(--text);}
+
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-thumb{background:#2f2f35;border-radius:6px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+
+  <div class="bar">
+    <div class="brand"><b>tier list</b><span>movies</span></div>
+    <div class="field">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="lbInput" type="text" placeholder="letterboxd username or profile url (e.g. dave or letterboxd.com/dave)" />
+    </div>
+    <button id="importBtn" class="primary">Import</button>
+    <button id="uploadBtn">Upload images</button>
+    <button id="exportBtn">Export PNG</button>
+    <button id="resetBtn" class="ghost">Reset</button>
+    <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
+  </div>
+
+  <div id="status" class="status">paste your letterboxd profile and hit import, or upload your own poster images. click posters to multi-select, then drop a whole batch into a tier.</div>
+
+  <div id="tierlist" class="tierlist"></div>
+  <div class="addrow"><button id="addRowBtn">+ add row</button></div>
+
+  <div class="selbar" id="selbar">
+    <span class="n"><b id="selCount">0</b> selected</span>
+    <span class="move">move to</span>
+    <span id="selTiers" style="display:flex;gap:5px;"></span>
+    <button class="x" id="selClear" title="clear selection">&times;</button>
+  </div>
+
+  <div class="tray">
+    <div class="tray-head">
+      <span class="t">unranked <b id="poolCount">0</b></span>
+      <span class="grow"></span>
+      <button id="selectAllBtn" class="ghost">select all</button>
+      <button id="clearPoolBtn" class="ghost">clear pool</button>
+    </div>
+    <div id="pool" class="pool" data-zone="pool"></div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ----------------------------- state ----------------------------- */
+  const DEFAULT_TIERS = [
+    {label:"S", color:"#ff7f7f"},
+    {label:"A", color:"#ffbf7f"},
+    {label:"B", color:"#ffff7f"},
+    {label:"C", color:"#7fff7f"},
+    {label:"D", color:"#7fbfff"},
+    {label:"E", color:"#8f8fff"},
+    {label:"F", color:"#ff7fff"},
+  ];
+
+  let uid = 1;
+  const nid = () => "n" + (uid++);
+
+  const state = {
+    items: {},                 // id -> {id, title, year, poster, fallback}
+    tiers: DEFAULT_TIERS.map(t => ({ id: nid(), label: t.label, color: t.color, items: [] })),
+    pool: [],                  // ids
+  };
+  const selected = new Set();
+  let dragIds = [];
+  let focusId = null;
+
+  /* ----------------------------- helpers ----------------------------- */
+  const $ = sel => document.querySelector(sel);
+  const statusEl = $("#status");
+
+  function setStatus(html, isErr){
+    statusEl.className = "status" + (isErr ? " err" : "");
+    statusEl.innerHTML = html;
+  }
+  function busy(html){ setStatus('<span class="spin"></span>' + html); }
+
+  function locationOf(id){
+    if (state.pool.includes(id)) return state.pool;
+    for (const t of state.tiers){ if (t.items.includes(id)) return t.items; }
+    return null;
+  }
+  function removeFromAll(id){
+    const i1 = state.pool.indexOf(id); if (i1 > -1) state.pool.splice(i1,1);
+    for (const t of state.tiers){ const i = t.items.indexOf(id); if (i > -1) t.items.splice(i,1); }
+  }
+  function moveTo(ids, targetList){
+    ids.forEach(id => { removeFromAll(id); targetList.push(id); });
+  }
+
+  /* ----------------------------- render ----------------------------- */
+  function chipEl(id){
+    const it = state.items[id];
+    const el = document.createElement("div");
+    el.className = "chip" + (selected.has(id) ? " sel" : "");
+    el.draggable = true;
+    el.dataset.id = id;
+    el.title = it.title + (it.year ? " (" + it.year + ")" : "");
+
+    if (it.poster){
+      const img = document.createElement("img");
+      img.crossOrigin = "anonymous";
+      img.src = it.poster;
+      img.alt = it.title;
+      if (it.fallback){
+        img.addEventListener("error", () => { if (img.src !== it.fallback){ img.src = it.fallback; } }, { once:true });
+      }
+      el.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "ph";
+      ph.textContent = it.title;
+      el.appendChild(ph);
+    }
+    if (it.year){
+      const yr = document.createElement("div");
+      yr.className = "yr";
+      yr.textContent = it.year;
+      el.appendChild(yr);
+    }
+
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+      render();
+    });
+    el.addEventListener("dragstart", e => {
+      dragIds = (selected.has(id) && selected.size > 0) ? [...selected] : [id];
+      if (!selected.has(id)){ selected.clear(); selected.add(id); }
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", id);
+      requestAnimationFrame(() => document.querySelectorAll(".chip").forEach(c => {
+        if (dragIds.includes(c.dataset.id)) c.classList.add("dragging");
+      }));
+    });
+    el.addEventListener("dragend", () => {
+      document.querySelectorAll(".dragging").forEach(c => c.classList.remove("dragging"));
+    });
+    return el;
+  }
+
+  function wireDropZone(el, getList){
+    el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("over"); });
+    el.addEventListener("dragleave", () => el.classList.remove("over"));
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      el.classList.remove("over");
+      if (!dragIds.length){ const d = e.dataTransfer.getData("text/plain"); if (d) dragIds = [d]; }
+      if (dragIds.length){ moveTo(dragIds, getList()); }
+      dragIds = [];
+      selected.clear();
+      render();
+    });
+  }
+
+  function render(){
+    // tier list
+    const list = $("#tierlist");
+    list.innerHTML = "";
+    state.tiers.forEach((tier, idx) => {
+      const row = document.createElement("div");
+      row.className = "tier";
+
+      const label = document.createElement("div");
+      label.className = "label";
+      label.style.background = tier.color;
+      label.contentEditable = "true";
+      label.spellcheck = false;
+      label.dataset.count = tier.items.length || "";
+      label.textContent = tier.label;
+      label.addEventListener("mousedown", e => e.stopPropagation());
+      label.addEventListener("click", e => e.stopPropagation());
+      label.addEventListener("blur", () => { tier.label = label.textContent.replace(/\s+/g," ").trim() || " "; });
+      label.addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); label.blur(); } });
+      row.appendChild(label);
+      if (tier.id === focusId){
+        requestAnimationFrame(() => {
+          label.focus();
+          const range = document.createRange(); range.selectNodeContents(label);
+          const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+          focusId = null;
+        });
+      }
+
+      const drop = document.createElement("div");
+      drop.className = "drop";
+      tier.items.forEach(id => drop.appendChild(chipEl(id)));
+      wireDropZone(drop, () => tier.items);
+      row.appendChild(drop);
+
+      const tools = document.createElement("div");
+      tools.className = "rowtools";
+      const up = document.createElement("button"); up.textContent = "▲"; up.title = "move row up";
+      up.onclick = () => { if (idx > 0){ const a = state.tiers; [a[idx-1],a[idx]] = [a[idx],a[idx-1]]; render(); } };
+      const colorPick = document.createElement("input");
+      colorPick.type = "color"; colorPick.value = tier.color; colorPick.title = "row color";
+      colorPick.oninput = () => { tier.color = colorPick.value; label.style.background = tier.color; };
+      const down = document.createElement("button"); down.textContent = "▼"; down.title = "move row down";
+      down.onclick = () => { if (idx < state.tiers.length-1){ const a = state.tiers; [a[idx+1],a[idx]] = [a[idx],a[idx+1]]; render(); } };
+      const del = document.createElement("button"); del.textContent = "✕"; del.title = "delete row (posters go back to pool)";
+      del.onclick = () => {
+        if (state.tiers.length <= 1) return;
+        state.pool.push(...tier.items);
+        state.tiers.splice(idx,1);
+        render();
+      };
+      tools.append(up, colorPick, down, del);
+      row.appendChild(tools);
+
+      list.appendChild(row);
+    });
+
+    // pool
+    const pool = $("#pool");
+    pool.innerHTML = "";
+    if (state.pool.length === 0){
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.innerHTML = "nothing here yet. <b>import a letterboxd profile</b> or <b>upload images</b> above to fill this tray, then drag posters up into the tiers.";
+      pool.appendChild(e);
+    } else {
+      state.pool.forEach(id => pool.appendChild(chipEl(id)));
+    }
+
+    // counters
+    $("#poolCount").textContent = state.pool.length;
+
+    // selection bar
+    const selbar = $("#selbar");
+    if (selected.size > 0){
+      selbar.classList.add("show");
+      $("#selCount").textContent = selected.size;
+      const wrap = $("#selTiers");
+      wrap.innerHTML = "";
+      state.tiers.forEach(tier => {
+        const b = document.createElement("button");
+        b.className = "tbtn";
+        b.style.background = tier.color;
+        b.textContent = tier.label;
+        b.title = "move selected to " + tier.label;
+        b.onclick = () => { moveTo([...selected], tier.items); selected.clear(); render(); };
+        wrap.appendChild(b);
+      });
+      const pb = document.createElement("button");
+      pb.className = "x"; pb.textContent = "↓"; pb.title = "send selected back to pool";
+      pb.onclick = () => { moveTo([...selected], state.pool); selected.clear(); render(); };
+      wrap.appendChild(pb);
+    } else {
+      selbar.classList.remove("show");
+    }
+  }
+
+  // clear selection on empty click
+  document.addEventListener("click", () => { if (selected.size){ selected.clear(); render(); } });
+
+  /* ----------------------------- adding items ----------------------------- */
+  function addItem(title, year, poster, fallback){
+    const id = nid();
+    state.items[id] = { id, title: title || "Untitled", year: year || "", poster: poster || "", fallback: fallback || "" };
+    state.pool.push(id);
+    return id;
+  }
+
+  /* ----------------------------- letterboxd import ----------------------------- */
+  function parseUsername(raw){
+    let s = (raw || "").trim();
+    if (!s) return "";
+    s = s.replace(/^@/, "");
+    const m = s.match(/letterboxd\.com\/([^\/\?#\s]+)/i);
+    if (m) return m[1];
+    return s.replace(/\/.*$/, "").replace(/[^A-Za-z0-9_]/g, "");
+  }
+
+  const PROXIES = [
+    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+    u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+    u => "https://thingproxy.freeboard.io/fetch/" + u,
+  ];
+  async function fetchText(url){
+    let lastErr;
+    for (const make of PROXIES){
+      try{
+        const res = await fetch(make(url), { headers: { "Accept": "*/*" } });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const txt = await res.text();
+        if (txt && txt.length > 60) return txt;
+        throw new Error("empty response");
+      } catch (e){ lastErr = e; }
+    }
+    throw lastErr || new Error("all proxies failed");
+  }
+
+  function localTag(parent, name){
+    const els = parent.getElementsByTagName("*");
+    for (let i = 0; i < els.length; i++){
+      const nn = els[i].nodeName || "";
+      if (nn.split(":").pop() === name) return (els[i].textContent || "").trim();
+    }
+    return "";
+  }
+
+  function upscalePoster(url){
+    if (!url) return "";
+    // letterboxd crop urls look like ...-0-150-0-225-crop.jpg  (2:3 ratio)
+    return url.replace(/-0-\d+-0-\d+-crop/, "-0-300-0-450-crop");
+  }
+
+  function seenKeys(){
+    const seen = new Set();
+    Object.values(state.items).forEach(it => seen.add((it.title + "__" + it.year).toLowerCase()));
+    return seen;
+  }
+
+  async function importLetterboxd(){
+    const user = parseUsername($("#lbInput").value);
+    if (!user){ setStatus("enter a letterboxd username or profile url first.", true); return; }
+    busy('importing <b>' + user + '</b> ...');
+
+    // 1) try the deployed backend: full library + TMDB poster art
+    try {
+      const r = await fetch("/api/letterboxd?user=" + encodeURIComponent(user));
+      const ct = r.headers.get("content-type") || "";
+      if (ct.includes("application/json")){
+        const j = await r.json();
+        if (j.films && j.films.length){
+          const added = addFilms(j.films);
+          setStatus(added
+            ? 'added <b>' + added + '</b> films from <b>' + user + '</b> (full library). drag them into tiers, or click to multi-select and batch-assign.'
+            : "those films are already loaded - nothing new to add.");
+          return;
+        }
+        setStatus(j.error || "backend is reachable but returned no films.", true);
+        return;
+      }
+      // non-JSON response (e.g. a static-only deploy with no function) -> fall through
+    } catch (e){
+      // no backend reachable (opened locally / not deployed) -> fall through
+    }
+
+    // 2) fallback: public RSS feed through a CORS proxy (most recent ~50 films)
+    await importViaRss(user);
+  }
+
+  function addFilms(films){
+    const seen = seenKeys();
+    let added = 0;
+    for (const f of films){
+      const title = (f.title || "").trim();
+      const year = (f.year || "").toString().trim();
+      if (!title) continue;
+      const key = (title + "__" + year).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      addItem(title, year, f.poster || "", "");
+      added++;
+    }
+    if (added) render();
+    return added;
+  }
+
+  async function importViaRss(user){
+    busy('no backend found - pulling your recent films for <b>' + user + '</b> from letterboxd ...');
+    const rss = "https://letterboxd.com/" + user + "/rss/";
+    let xmlText;
+    try { xmlText = await fetchText(rss); }
+    catch (e){
+      setStatus("couldn't reach letterboxd. if you opened this from claude's preview window, browser sandboxing blocks the request - download / host the file (or run it locally) and it works. you can always upload poster images instead.", true);
+      return;
+    }
+    const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+    const items = doc.getElementsByTagName("item");
+    if (!items.length){
+      setStatus('no films found in that feed. double-check the username (you typed <b>' + user + '</b>) and that the profile is public.', true);
+      return;
+    }
+    const seen = seenKeys();
+    let added = 0;
+    for (let i = 0; i < items.length; i++){
+      const item = items[i];
+      let title = localTag(item, "filmTitle");
+      const year = localTag(item, "filmYear");
+      if (!title){
+        const t = localTag(item, "title").replace(/\s*-\s*★.*$/, "").trim();
+        title = t.replace(/,\s*\d{4}$/, "").trim();
+      }
+      if (!title) continue;
+      const key = (title + "__" + year).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const descRaw = localTag(item, "description");
+      let poster = "";
+      if (descRaw){
+        const tmp = document.createElement("div");
+        tmp.innerHTML = descRaw;
+        const img = tmp.querySelector("img");
+        if (img) poster = img.getAttribute("src") || "";
+      }
+      addItem(title, year, upscalePoster(poster), poster);
+      added++;
+    }
+    render();
+    setStatus(added
+      ? 'added <b>' + added + "</b> films from <b>" + user + "</b>. heads up: this public feed only returns your most recent ~50 logged films - deploy the backend (setup steps from claude) to pull your full history. drag them into tiers, or multi-select to batch-assign."
+      : "those films are already loaded - nothing new to add.");
+  }
+
+  /* ----------------------------- image upload ----------------------------- */
+  function handleFiles(files){
+    let n = 0;
+    [...files].forEach(f => {
+      if (!f.type.startsWith("image/")) return;
+      const url = URL.createObjectURL(f);
+      const name = f.name.replace(/\.[^.]+$/, "");
+      addItem(name, "", url, "");
+      n++;
+    });
+    if (n){ render(); setStatus('added <b>' + n + '</b> uploaded image' + (n>1?"s":"") + ' to the pool.'); }
+  }
+
+  /* ----------------------------- export ----------------------------- */
+  async function exportPng(){
+    if (!window.html2canvas){ setStatus("export library didn't load (check your connection), try again.", true); return; }
+    busy("rendering png ...");
+    selected.clear(); render();
+    const node = $("#tierlist");
+    try{
+      const canvas = await html2canvas(node, { backgroundColor: "#0d0d0f", useCORS: true, scale: 2, logging: false });
+      const a = document.createElement("a");
+      a.download = "tierlist.png";
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+      setStatus("exported tierlist.png ✓");
+    } catch (e){
+      setStatus("export hit a snag - this usually means letterboxd's images blocked the canvas (CORS). uploaded images always export fine. you can also just screenshot the board.", true);
+    }
+  }
+
+  /* ----------------------------- wiring ----------------------------- */
+  $("#importBtn").addEventListener("click", importLetterboxd);
+  $("#lbInput").addEventListener("keydown", e => { if (e.key === "Enter") importLetterboxd(); });
+  $("#uploadBtn").addEventListener("click", () => $("#fileInput").click());
+  $("#fileInput").addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
+  $("#exportBtn").addEventListener("click", exportPng);
+  $("#resetBtn").addEventListener("click", () => {
+    if (!confirm("clear everything and start over?")) return;
+    state.items = {}; state.pool = [];
+    state.tiers = DEFAULT_TIERS.map(t => ({ id: nid(), label: t.label, color: t.color, items: [] }));
+    selected.clear();
+    render();
+    setStatus("reset. import or upload to begin again.");
+  });
+  $("#addRowBtn").addEventListener("click", () => {
+    const t = { id: nid(), label: "New", color: "#9aa0a6", items: [] };
+    state.tiers.push(t);
+    focusId = t.id;
+    render();
+  });
+  $("#selClear").addEventListener("click", () => { selected.clear(); render(); });
+  $("#selectAllBtn").addEventListener("click", e => {
+    e.stopPropagation();
+    state.pool.forEach(id => selected.add(id));
+    render();
+  });
+  $("#clearPoolBtn").addEventListener("click", e => {
+    e.stopPropagation();
+    if (!state.pool.length) return;
+    if (!confirm("remove all unranked posters from the pool? (posters already placed in tiers stay)")) return;
+    state.pool.forEach(id => delete state.items[id]);
+    state.pool = [];
+    selected.clear();
+    render();
+  });
+
+  // pool as a drop zone
+  wireDropZone($("#pool"), () => state.pool);
+
+  // drag image files onto the pool
+  const poolEl = $("#pool");
+  poolEl.addEventListener("dragover", e => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); });
+  poolEl.addEventListener("drop", e => { if (e.dataTransfer.files && e.dataTransfer.files.length){ e.preventDefault(); handleFiles(e.dataTransfer.files); } });
+
+  render();
+})();
+</script>
+</body>
+</html>
