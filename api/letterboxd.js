@@ -58,10 +58,6 @@ export default async function handler(req, res) {
 
   const user = String(req.query.user || "").trim().replace(/[^A-Za-z0-9_]/g, "");
   if (!user) { res.status(400).json({ error: "missing ?user=" }); return; }
-
-  // temporary diagnostics: GET /api/letterboxd?user=X&debug=1
-  if (req.query.debug) { res.status(200).json(await debugScrape(user)); return; }
-
   if (!TMDB_KEY) {
     res.status(500).json({ error: "TMDB_API_KEY is not set on the server. Add it in your Vercel project settings." });
     return;
@@ -101,29 +97,6 @@ async function scrapeFilms(user) {
   // fallback: recent films via the public RSS feed (not behind the bot challenge)
   const films = await scrapeFilmsViaRss(user);
   return { films, source: "recent" };
-}
-
-/* ---------------- diagnostics ---------------- */
-
-async function debugScrape(user) {
-  const out = { user, region: process.env.VERCEL_REGION || null };
-  try {
-    const client = await connectH2("https://letterboxd.com");
-    client.on("error", () => {});
-    try {
-      const r = await h2Get(client, `/${user}/films/page/1/`);
-      out.pageStatus = r.status;
-      out.bodyLen = r.body.length;
-      out.challenge = /just a moment|enable javascript/i.test(r.body);
-      out.filmsOnPage = (r.body.match(/data-item-slug=/g) || []).length;
-      out.snippet = r.body.slice(0, 160);
-    } finally { client.close(); }
-  } catch (e) { out.pageError = e && e.message; }
-  try {
-    const rr = await fetch(`https://letterboxd.com/${user}/rss/`, { headers: { "user-agent": BROWSER_HEADERS["user-agent"] } });
-    out.rssStatus = rr.status;
-  } catch (e) { out.rssError = e && e.message; }
-  return out;
 }
 
 /* ---------------- http/2 client ---------------- */
