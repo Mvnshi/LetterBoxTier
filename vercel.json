@@ -1,8 +1,12 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/letterboxd.js": {
-      "maxDuration": 60
-    }
-  }
+  "version": 2,
+  "builds": [
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "api/letterboxd.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/letterboxd", "dest": "/api/letterboxd.js" },
+    { "handle": "filesystem" },
+    { "src": "/", "dest": "/index.html" }
+  ]
 }
