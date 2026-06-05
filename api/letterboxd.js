@@ -51,6 +51,7 @@ const BROWSER_HEADERS = {
 };
 
 export default async function handler(req, res) {
+  const startedAt = Date.now();
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "s-maxage=600, stale-while-revalidate=86400");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
@@ -68,7 +69,10 @@ export default async function handler(req, res) {
       res.status(404).json({ error: "no films found - make sure the profile is public and the username is correct." });
       return;
     }
-    const withPosters = await attachPosters(films);
+    // leave ~12s of the 60s budget for the response so huge libraries (1000+
+    // films) never time out mid-poster-fetch - any stragglers fall back to the
+    // labelled placeholder the frontend already renders.
+    const withPosters = await attachPosters(films, startedAt + 48000);
     const body = { user, count: withPosters.length, films: withPosters, source };
     if (source === "recent") {
       body.note = "letterboxd is rate-limiting the full-library scrape right now, " +
@@ -279,9 +283,11 @@ function decodeEntities(s) {
 
 /* ---------------- tmdb posters ---------------- */
 
-async function attachPosters(films) {
+async function attachPosters(films, deadline) {
   const cache = new Map();
-  await pool(films, 25, async (f) => {
+  await pool(films, 30, async (f) => {
+    // once we're near the time budget, stop fetching; the rest render as placeholders.
+    if (deadline && Date.now() > deadline) return;
     // RSS gives us an exact TMDB id - use it for a precise poster, no fuzzy search.
     if (f.tmdbId) { f.poster = await tmdbPosterById(f.tmdbId); return; }
     const key = (f.title + "|" + f.year).toLowerCase();
