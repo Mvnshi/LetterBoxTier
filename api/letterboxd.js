@@ -1,25 +1,29 @@
 // /api/letterboxd  ->  GET /api/letterboxd?user=<username>
-// Scrapes the user's full Letterboxd /films/ list (every page) server-side,
-// then attaches poster art from TMDB. The TMDB key lives in process.env, never
-// touches the browser.
+// Scrapes the user's full Letterboxd /films/ list (every page), then attaches
+// poster art from TMDB. The TMDB key lives in process.env, never touches the
+// browser.
 //
 // Required env var:  TMDB_API_KEY   (set in Vercel project settings + local .env)
 //
-// Two things broke the old scraper, both fixed here:
+// Getting the list past Cloudflare:
 //
-//  1. Letterboxd sits behind Cloudflare, which now 403s ("Just a moment") any
-//     HTTP/1.1 request claiming to be Chrome - real browsers always speak h2.
-//     Node's global fetch() is HTTP/1.1, so it got blocked. We use the built-in
-//     node:http2 client with a full browser header set instead.
+//   Letterboxd's /films/ pages sit behind a Cloudflare "Just a moment" challenge
+//   that blocks any non-browser / datacenter IP (so a plain server fetch from
+//   Vercel always 403s). We handle it in three tiers, best first:
 //
-//  2. The films grid markup changed: the old data-film-slug attribute is gone,
-//     replaced by a React LazyPoster component carrying data-item-slug /
-//     data-item-name. parseFilms() reads the new shape.
+//     1. SCRAPER API (set SCRAPER_API_KEY) - routes the fetch through a
+//        Cloudflare-bypassing scraper service with residential IPs + JS render.
+//        This is the only thing that reliably pulls the FULL list of an
+//        arbitrary public profile from a server. See README for setup.
+//     2. DIRECT http/2 - works from a clean/residential IP (e.g. local `vercel
+//        dev`), no key needed. On Vercel this is normally blocked; we still try
+//        it when no scraper key is configured.
+//     3. RSS fallback - the public /rss/ feed isn't challenged, but it's the
+//        diary/review feed (often far fewer films than the watched list), so
+//        it's a last resort to return *something* instead of an error.
 //
-// If Cloudflare still blocks the page scrape (e.g. a datacenter IP with a bad
-// reputation), we fall back to the public RSS feed, which isn't behind the bot
-// challenge - that returns the most recent ~50 logged films instead of the full
-// library, so the user always gets something rather than a hard error.
+//   The films grid is a React LazyPoster component carrying data-item-slug /
+//   data-item-name (e.g. "Office Romance (2026)"); parseFilms() reads that.
 
 import http2 from "node:http2";
 import zlib from "node:zlib";
@@ -29,9 +33,14 @@ export const config = { maxDuration: 60 };
 const TMDB_KEY = process.env.TMDB_API_KEY;
 const PAGE_CAP = 60; // safety cap (~4300 films); raise if you need more
 
-// A complete, modern Chrome fingerprint. The combination of a current UA plus the
-// sec-ch-ua / sec-fetch / upgrade-insecure-requests hints is what Cloudflare looks
-// for; a bare UA alone still gets challenged.
+// scraper service config (optional but recommended for arbitrary profiles)
+const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
+const SCRAPER_PROVIDER = (process.env.SCRAPER_PROVIDER || "scraperapi").toLowerCase();
+// power users can point at any provider: a full URL with {url} where the
+// (url-encoded) target goes, e.g. https://api.foo.com/?key=XXX&render=1&url={url}
+const SCRAPER_TEMPLATE = process.env.SCRAPER_URL_TEMPLATE;
+
+// A complete, modern Chrome fingerprint for the direct-h2 path.
 const BROWSER_HEADERS = {
   "user-agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -64,19 +73,19 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { films, source } = await scrapeFilms(user);
+    // leave headroom in the 60s budget: ~42s for the (slow, JS-rendered) page
+    // scrape, then the rest for TMDB posters, then ~8s to serialize the response.
+    const { films, source } = await scrapeFilms(user, startedAt + 42000);
     if (!films.length) {
       res.status(404).json({ error: "no films found - make sure the profile is public and the username is correct." });
       return;
     }
-    // leave ~12s of the 60s budget for the response so huge libraries (1000+
-    // films) never time out mid-poster-fetch - any stragglers fall back to the
-    // labelled placeholder the frontend already renders.
-    const withPosters = await attachPosters(films, startedAt + 48000);
+    const withPosters = await attachPosters(films, startedAt + 52000);
     const body = { user, count: withPosters.length, films: withPosters, source };
     if (source === "recent") {
-      body.note = "letterboxd is rate-limiting the full-library scrape right now, " +
-        "so these are your most recent logged films. try again in a bit for the whole history.";
+      body.note = "couldn't pull the full watched list (letterboxd's anti-bot blocked the server " +
+        "and no scraper key is configured), so these are the recent films from the public RSS feed. " +
+        "set up SCRAPER_API_KEY to import full profiles - see the README.";
     }
     res.status(200).json(body);
   } catch (e) {
@@ -86,20 +95,93 @@ export default async function handler(req, res) {
 
 /* ---------------- scrape orchestration ---------------- */
 
-async function scrapeFilms(user) {
-  // primary: full library via the paginated /films/ grid
+async function scrapeFilms(user, pagesDeadline) {
+  // primary: full library via the paginated /films/ grid (scraper or direct)
   try {
-    const films = await scrapeFilmsViaPages(user);
+    const films = await scrapeFilmsViaPages(user, pagesDeadline);
     if (films.length) return { films, source: "library" };
   } catch (_) {
-    // blocked / network hiccup -> fall through to RSS
+    // blocked / scraper error / network hiccup -> fall through to RSS
   }
   // fallback: recent films via the public RSS feed (not behind the bot challenge)
   const films = await scrapeFilmsViaRss(user);
   return { films, source: "recent" };
 }
 
-/* ---------------- http/2 client ---------------- */
+// Shared page-collection logic; `getPage(p)` returns the HTML for films page p.
+async function collectFilms(getPage, concurrency, deadline) {
+  const first = await getPage(1);
+
+  let maxPage = 1;
+  const nums = [...first.matchAll(/\/films\/page\/(\d+)\//g)].map((m) => +m[1]);
+  if (nums.length) maxPage = Math.min(Math.max(...nums), PAGE_CAP);
+
+  const buckets = [parseFilms(first)];
+  const rest = [];
+  for (let p = 2; p <= maxPage; p++) rest.push(p);
+
+  await pool(rest, concurrency, async (p) => {
+    if (deadline && Date.now() > deadline) return; // big library + slow scraper: return partial
+    try { buckets.push(parseFilms(await getPage(p))); }
+    catch (_) { /* skip a flaky page rather than failing the whole request */ }
+  });
+
+  // flatten + dedupe by slug
+  const map = new Map();
+  for (const arr of buckets) for (const f of arr) if (!map.has(f.slug)) map.set(f.slug, f);
+  return [...map.values()];
+}
+
+function scrapeFilmsViaPages(user, deadline) {
+  return SCRAPER_KEY || SCRAPER_TEMPLATE
+    ? scrapeViaScraper(user, deadline)
+    : scrapeViaDirectH2(user, deadline);
+}
+
+/* ---------------- tier 1: scraper API ---------------- */
+
+function scraperUrl(target) {
+  const enc = encodeURIComponent(target);
+  if (SCRAPER_TEMPLATE) return SCRAPER_TEMPLATE.replace("{url}", enc);
+  const k = encodeURIComponent(SCRAPER_KEY || "");
+  switch (SCRAPER_PROVIDER) {
+    case "scrapingbee":
+      return `https://app.scrapingbee.com/api/v1/?api_key=${k}&url=${enc}&render_js=true&stealth_proxy=true&country_code=us`;
+    case "zenrows":
+      return `https://api.zenrows.com/v1/?apikey=${k}&url=${enc}&js_render=true&antibot=true`;
+    case "scrapingant":
+      return `https://api.scrapingant.com/v2/general?url=${enc}&x-api-key=${k}&browser=true`;
+    case "scraperapi":
+    default:
+      return `https://api.scraperapi.com/?api_key=${k}&url=${enc}&render=true&country_code=us`;
+  }
+}
+
+async function scrapeViaScraper(user, deadline) {
+  const getPage = async (p) => {
+    const r = await fetch(scraperUrl(`https://letterboxd.com/${user}/films/page/${p}/`), {
+      signal: AbortSignal.timeout(35000),
+    });
+    const body = await r.text();
+    if (r.status !== 200) throw new Error("scraper responded " + r.status);
+    if (/just a moment|enable javascript/i.test(body)) throw new Error("scraper returned a challenge page");
+    return body;
+  };
+  // scraper calls are slow + credit-metered, so keep concurrency low
+  return collectFilms(getPage, 3, deadline);
+}
+
+/* ---------------- tier 2: direct http/2 ---------------- */
+
+async function scrapeViaDirectH2(user, deadline) {
+  const client = await connectH2("https://letterboxd.com");
+  client.on("error", () => {}); // don't let a late socket error crash the function
+  try {
+    return await collectFilms((p) => fetchPage(client, `/${user}/films/page/${p}/`), 6, deadline);
+  } finally {
+    client.close();
+  }
+}
 
 function connectH2(origin) {
   return new Promise((resolve, reject) => {
@@ -115,8 +197,7 @@ function connectH2(origin) {
   });
 }
 
-// Single GET over an existing h2 session. Returns { status, body } with the body
-// already decompressed (Cloudflare always sends gzip/br).
+// Single GET over an existing h2 session, body already decompressed.
 function h2Get(client, path) {
   return new Promise((resolve, reject) => {
     const req = client.request({ ":method": "GET", ":path": path, ":scheme": "https", ...BROWSER_HEADERS });
@@ -139,8 +220,6 @@ function h2Get(client, path) {
   });
 }
 
-// Fetch one page as HTML. Cloudflare occasionally throws a one-off challenge even
-// over h2, so retry a couple of times with a short backoff before giving up.
 async function fetchPage(client, path) {
   let last = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -153,44 +232,12 @@ async function fetchPage(client, path) {
   throw new Error("letterboxd responded " + last);
 }
 
-/* ---------------- letterboxd: full library (pages) ---------------- */
-
-async function scrapeFilmsViaPages(user) {
-  const client = await connectH2("https://letterboxd.com");
-  client.on("error", () => {}); // don't let a late socket error crash the function
-  try {
-    const path = (p) => `/${user}/films/page/${p}/`;
-    const first = await fetchPage(client, path(1));
-
-    // figure out how many pages exist from the pagination links
-    let maxPage = 1;
-    const nums = [...first.matchAll(/\/films\/page\/(\d+)\//g)].map((m) => +m[1]);
-    if (nums.length) maxPage = Math.min(Math.max(...nums), PAGE_CAP);
-
-    const buckets = [parseFilms(first)];
-    const rest = [];
-    for (let p = 2; p <= maxPage; p++) rest.push(p);
-
-    // h2 multiplexes streams over the one connection, so we can pull pages in parallel
-    await pool(rest, 6, async (p) => {
-      try { buckets.push(parseFilms(await fetchPage(client, path(p)))); }
-      catch (_) { /* skip a flaky page rather than failing the whole request */ }
-    });
-
-    // flatten + dedupe by slug
-    const map = new Map();
-    for (const arr of buckets) for (const f of arr) if (!map.has(f.slug)) map.set(f.slug, f);
-    return [...map.values()];
-  } finally {
-    client.close();
-  }
-}
+/* ---------------- film grid parser ---------------- */
 
 function parseFilms(html) {
-  // Letterboxd renders each film as a LazyPoster react-component carrying
-  // data-item-slug + data-item-name (e.g. "Office Romance (2026)"). The name sits
-  // just *before* the slug in the same tag, so we anchor on each slug and read a
-  // window that reaches back far enough to catch the name.
+  // Each film is a LazyPoster react-component carrying data-item-slug +
+  // data-item-name. The name sits just *before* the slug in the same tag, so we
+  // anchor on each slug and read a window that reaches back to catch the name.
   const out = [];
   const slugRe = /data-item-slug="([^"]+)"/g;
   const hits = [];
@@ -220,13 +267,14 @@ function parseFilms(html) {
   return out;
 }
 
-/* ---------------- letterboxd: recent films (RSS fallback) ---------------- */
+/* ---------------- tier 3: recent films (RSS fallback) ---------------- */
 
 async function scrapeFilmsViaRss(user) {
   let r;
   try {
     r = await fetch(`https://letterboxd.com/${user}/rss/`, {
       headers: { "user-agent": BROWSER_HEADERS["user-agent"], "accept": "application/rss+xml,application/xml,*/*" },
+      signal: AbortSignal.timeout(15000),
     });
   } catch (_) { return []; }
   if (!r.ok) return [];
@@ -243,7 +291,6 @@ async function scrapeFilmsViaRss(user) {
     const tmdbId = stripCdata(tagText(block, "tmdb:movieId")).trim();
 
     if (!title) {
-      // fall back to "<title>Name, YEAR - ★★★</title>"
       const raw = decodeEntities(stripCdata(tagText(block, "title")));
       title = raw.replace(/\s*-\s*★.*$/, "").replace(/,\s*\d{4}\s*$/, "").trim();
     }
@@ -265,7 +312,6 @@ function stripCdata(s) {
 /* ---------------- shared helpers ---------------- */
 
 function slugToTitle(slug) {
-  // strip a trailing disambiguation year (e.g. "heat-1995")
   return slug.replace(/-\d{4}$/, "").replace(/-/g, " ").trim();
 }
 
@@ -286,9 +332,7 @@ function decodeEntities(s) {
 async function attachPosters(films, deadline) {
   const cache = new Map();
   await pool(films, 30, async (f) => {
-    // once we're near the time budget, stop fetching; the rest render as placeholders.
-    if (deadline && Date.now() > deadline) return;
-    // RSS gives us an exact TMDB id - use it for a precise poster, no fuzzy search.
+    if (deadline && Date.now() > deadline) return; // near the budget: rest render as placeholders
     if (f.tmdbId) { f.poster = await tmdbPosterById(f.tmdbId); return; }
     const key = (f.title + "|" + f.year).toLowerCase();
     if (cache.has(key)) { f.poster = cache.get(key); return; }
@@ -306,7 +350,7 @@ async function tmdbPoster(title, year) {
     u.searchParams.set("query", title);
     u.searchParams.set("include_adult", "false");
     if (year) u.searchParams.set("primary_release_year", year);
-    const r = await fetch(u);
+    const r = await fetch(u, { signal: AbortSignal.timeout(12000) });
     if (!r.ok) return "";
     const j = await r.json();
     const hit = (j.results || []).find((x) => x.poster_path);
@@ -320,7 +364,7 @@ async function tmdbPosterById(id) {
   try {
     const u = new URL("https://api.themoviedb.org/3/movie/" + encodeURIComponent(id));
     u.searchParams.set("api_key", TMDB_KEY);
-    const r = await fetch(u);
+    const r = await fetch(u, { signal: AbortSignal.timeout(12000) });
     if (!r.ok) return "";
     const j = await r.json();
     return j.poster_path ? "https://image.tmdb.org/t/p/w342" + j.poster_path : "";
